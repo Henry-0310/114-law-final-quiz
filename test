@@ -1,0 +1,18 @@
+index.html
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8" />
+  <title>114 法律期末測驗</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      padding: 40px;
+    }
+  </style>
+</head>
+<body>
+  <h1>114 法律期末測驗</h1>
+  <p>GitHub Pages 成功部署 🎉</p>
+</body>
+</html>
