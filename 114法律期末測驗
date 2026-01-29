@@ -1,0 +1,652 @@
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, doc, getDocs, onSnapshot, addDoc, deleteDoc, serverTimestamp, query } from 'firebase/firestore';
+import { Timer, AlertCircle, CheckCircle2, XCircle, ChevronRight, Trophy, BookOpen, Clock, User, ShieldAlert, Fingerprint, Database, BarChart, Users, ArrowLeft, LockKeyhole, LogIn, Trash2, ExternalLink, Loader2, Target, Medal, Send, Lightbulb, CalendarClock } from 'lucide-react';
+
+// --- Firebase 配置 ---
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'magic-quiz-final-114';
+
+// --- 題目資料庫 (共 25 題) ---
+const allQuestions = [
+  // --- 簡易 (1~5 題，提供提示) ---
+  { 
+    id: 14, q: "下列何者中央機關首長的名稱是我國沒有的?", 
+    options: ["(A) 行政院院長", "(B) 監察院長", "(C) 考試院長", "(D) 國務卿"], 
+    ans: 3, difficulty: "Easy",
+    hint: "提示：我國採五權分立體制，相關職務可查詢《中華民國憲法》。"
+  },
+  { 
+    id: 16, q: "下列何者沒有血緣關係？", 
+    options: ["(A) 認領子女", "(B) 婚生子女", "(C) 非婚生子女", "(D) 養子女"], 
+    ans: 3, difficulty: "Easy",
+    hint: "提示：請查詢《民法》第 1072 條關於收養之法律效力。"
+  },
+  { 
+    id: 1, q: "下列何者不是隸屬我國行政院之行政機關？", 
+    options: ["(A) 中央銀行", "(B) 國立故宮博物院", "(C) 審計部", "(D) 國軍退除役官兵輔導委員會"], 
+    ans: 2, difficulty: "Easy",
+    hint: "提示：請查詢《行政院組織法》與《監察院組織法》之職權分立。"
+  },
+  { 
+    id: 7, q: "學者曾說明國家與政府的差異：「甲如同一間歷史悠久的房屋，乙是該居民選出的大管家。」請問下列敘述何者正確？", 
+    options: ["(A) 甲是指「政府」", "(B) 甲是乙的構成要素", "(C) 乙是甲的構成要素", "(D) 甲和乙皆為「國家」"], 
+    ans: 2, difficulty: "Easy",
+    hint: "提示：國家組成的四要素為人民、領土、政府、主權。"
+  },
+  { 
+    id: 15, q: "由我國憲法增修條文規定，下列何者不屬於總統之權限？", 
+    options: ["(A) 軍事統帥權", "(B) 主動解散立法院", "(C) 提名審計長", "(D) 代表國家出訪友邦"], 
+    ans: 1, difficulty: "Easy",
+    hint: "提示：請查詢《中華民國憲法增修條文》第 2 條關於總統職權之規定。"
+  },
+  // --- 中等 (10題) ---
+  { id: 19, q: "依我國民法規定，下列有關林阿信一家人親屬關係的敘述何者正確？", options: ["(A) 父母因婚姻成為姻親", "(B) 阿信與舅舅為姻親", "(C) 阿信與母親為血親", "(D) 阿信父與岳母為血親"], ans: 2, difficulty: "Medium" },
+  { id: 2, q: "下列何者非屬我國司法權的範圍？", options: ["(A) 民、刑事訴訟審判權", "(B) 司法院正副院長司法行政權", "(C) 針對憲法與法律命令解釋權", "(D) 中央及地方公務人員彈劾權"], ans: 3, difficulty: "Medium" },
+  { id: 3, q: "某公職候選人政見：「我一定能監督政府，請各位選民繼續給我連任機會。」該候選人最可能參選何者？", options: ["(A) 新北市市長", "(B) 板橋區區長", "(C) 花蓮市市民代表", "(D) 立法委員"], ans: 2, difficulty: "Medium" },
+  { id: 4, q: "政府制訂紓困補助，店家可向政府申請。請問上述內容最能體現下列何者？", options: ["(A) 政府規定必須接受補助", "(B) 只有遵守命令才有權利", "(C) 補助不需審核程序", "(D) 政府擁有制訂政策權力，人民有申請權利"], ans: 3, difficulty: "Medium" },
+  { id: 8, q: "索馬利蘭總統和國會由人民直選，也有自己的貨幣，但在世界沒有任何邦交國. 依組成要素分析其缺乏何者？", options: ["(A) 完整的領土", "(B) 對外的主權", "(C) 統治的政府組織", "(D) 足夠數量的人民"], ans: 1, difficulty: "Medium" },
+  { 
+    id: 18, 
+    q: "四個朋友分享家庭近況如下所示，由對話內容判斷，哪兩人的家庭型態較相似？\n凱翔：「我家的小姑姑和小叔叔每天吵個不停，我耳膜都快破了。」\n瑋駿：「我媽媽為了汰換舊車和奶奶冷戰了一個月，我跟我爸爸夾在這兩個女人中間好痛苦。」\n芊淨：「我爸爸最怕弟弟請病假，因為他是我們家唯一的大人，請假照顧弟弟，全勤獎金就泡湯了。」\n哲榮：「我媽媽跟嬸嬸、伯母每次都為了輪到誰煮飯、誰打掃的事，相互指責，煩死了。」", 
+    options: ["(A) 凱翔與哲榮", "(B) 芊淨與哲榮", "(C) 瑋駿與哲榮", "(D) 瑋駿與芊淨"], 
+    ans: 0, 
+    difficulty: "Medium" 
+  },
+  { id: 20, q: "12歲兒子買肉圓未加辣遭父毆打。請問：依照法律規定，這起家暴案何者正確？", options: ["(A) 婚姻存廢不需書約", "(B) 法不入家門僅有道德責任", "(C) 受害妻兒可向法院聲請保護令", "(D) 親權由家族第三方決定"], ans: 2, difficulty: "Medium" },
+  { id: 'n2', q: "下列何者是斷絕法律上親子關係的辦法？", options: ["(1) 收養", "(2) 結婚", "(3) 終止收養", "(4) 永不相見"], ans: 2, difficulty: "Medium" },
+  { id: 5, q: "「直轄市山地原住民區」和下列何者地方自治行政層級不同？", options: ["(A) 彰化市", "(B) 花壇鄉", "(C) 竹山鎮", "(D) 松山區"], ans: 3, difficulty: "Medium" },
+  { id: 17, q: "邑恩與韓籍姑丈學習韓文，姑丈育有一子。有關邑恩與姑姑一家的親屬關係何者正確？", options: ["(A) 邑恩是堂哥法定血親", "(B) 邑恩與堂哥為姻親", "(C) 姑姑是邑恩旁系血親", "(D) 姑姑一家為繼親家庭"], ans: 2, difficulty: "Medium" },
+  // --- 困難 (10題) ---
+  { id: 6, q: "桃園新總圖宣傳案的預算，應該是由哪一機構來編列及審核呢？", options: ["(A) 桃園市公所；桃園市議會", "(B) 桃園區公所；桃園區民代表會", "(C) 行政院文化部；立法院", "(D) 桃園市政府；桃園市議會"], ans: 3, difficulty: "Hard" },
+  { id: 9, q: "《勞動基準法施行細則》修正草案。文中提到的法令位階比下列哪部法令的位階低？", options: ["(A) 《機關訴願審議規程》", "(B) 《專技人員轉任公務人員條例》", "(C) 《一般廢棄物徵收辦法》", "(D) 《國教課程綱要》"], ans: 1, difficulty: "Hard" },
+  { id: 10, q: "小麗最近當選公職。請問小麗當選的公職最可能擁有下列何項職權？", options: ["(A) 提出縣市總預算案", "(B) 提出總統副總統罷免案", "(C) 解決縣市事權爭議", "(D) 審理總統副總統彈劾案"], ans: 1, difficulty: "Hard" },
+  { id: 11, q: "老珍發生車禍導致騎士昏迷後逃逸. 老珍除了過失傷害罪之外還可能犯了什麼罪？", options: ["(A) 不能安全駕駛罪", "(B) 普通遺棄罪", "(C) 肇事逃逸罪", "(D) 違背職務收賄罪"], ans: 2, difficulty: "Hard" },
+  { id: 12, q: "颱風停班課由各地政府宣布，請問這是因為何種制度？", options: ["(A) 權能區分", "(B) 分權制衡", "(C) 均權制度", "(D) 主權在民"], ans: 2, difficulty: "Hard" },
+  { id: 13, q: "我國立法委員共有 A 人，大法官有 B 人，則 A+B = ?", options: ["(A) 128 人", "(B) 113 人", "(C) 117 人", "(D) 132 人"], ans: 0, difficulty: "Hard" },
+  { id: 'n1', q: "判斷下列近親組合若登記結婚，其婚姻何者最可能為「有效」？", options: ["(A) 美清與哥哥養子", "(B) 雅芳與伯父兒子", "(C) 高帆與大嫂妹妹", "(D) 志宏與姑姑女兒"], ans: 2, difficulty: "Hard" },
+  { id: 'n3', q: "志明女兒與春嬌兒子結婚後，依照民法規定，志明與春嬌關係為何？", options: ["(1) 無親屬關係", "(2) 旁系血親", "(3) 旁系姻親", "(4) 直系姻親"], ans: 0, difficulty: "Hard" },
+  { id: 'n4', q: "在《憲法訴訟法》下，下列何者「不是」司法院大法官審理案件種類？", options: ["(1) 正副總統彈劾案", "(2) 政黨違憲解散案", "(3) 糾正行政機關不當措施", "(4) 統一解釋法律或命令"], ans: 2, difficulty: "Hard" },
+  { id: 'n5', q: "涵安君瑋具血緣關係；但涵安與君瑋父親無血親關係。稱謂最可能為？", options: ["(A) 伯父", "(B) 叔父", "(C) 姑丈", "(D) 舅舅"], ans: 2, difficulty: "Hard" }
+];
+
+const TOTAL_TIME = 25 * 60;
+const ADMIN_PASS = "1010310"; 
+const range = (start, end) => Array.from({ length: end - start + 1 }, (_, i) => start + i);
+
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [gameState, setGameState] = useState('start'); 
+  const [userInfo, setUserInfo] = useState({ grade: '', className: '', seat: '', name: '' });
+  const [currentIndex, setCurrentIndex] = useState(0);
+  const [selectedAnswer, setSelectedAnswer] = useState(null);
+  const [userAnswers, setUserAnswers] = useState([]);
+  const [timeLeft, setTimeLeft] = useState(TOTAL_TIME);
+  const [isTimeUp, setIsTimeUp] = useState(false);
+  const [timeTaken, setTimeTaken] = useState(0);
+  const [finalAnswersData, setFinalAnswersData] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isValidating, setIsValidating] = useState(false);
+  const [validationError, setValidationError] = useState(null);
+  const [showSubmitModal, setShowSubmitModal] = useState(false);
+  const [showHint, setShowHint] = useState(false);
+  
+  const [adminRecords, setAdminRecords] = useState([]);
+  const [adminInputPass, setAdminInputPass] = useState('');
+  const [loginError, setLoginError] = useState(false);
+  const [isConfirmingClear, setIsConfirmingClear] = useState(false);
+  const [activeAdminTab, setActiveAdminTab] = useState('list'); 
+
+  const timerRef = useRef(null);
+
+  // 初始化認證 (遵守 RULE 3)
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (e) {
+        console.error("Auth failed");
+      } finally {
+        setAuthChecked(true);
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, (u) => setUser(u));
+    return () => unsubscribe();
+  }, []);
+
+  // 計時器邏輯
+  useEffect(() => {
+    if (gameState === 'quiz' && timeLeft > 0) {
+      timerRef.current = setInterval(() => {
+        setTimeLeft((prev) => {
+          if (prev <= 1) {
+            clearInterval(timerRef.current);
+            handleAutoSubmit();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+    }
+    return () => clearInterval(timerRef.current);
+  }, [gameState]);
+
+  // 管理端數據監聽 (遵守 RULE 1)
+  useEffect(() => {
+    if (gameState === 'admin' && user) {
+      const q = collection(db, 'artifacts', appId, 'public', 'data', 'submissions');
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setAdminRecords(docs); 
+      });
+      return () => unsubscribe();
+    }
+  }, [gameState, user]);
+
+  // --- 後台綜合數據分析邏輯 ---
+  const analysisData = useMemo(() => {
+    if (adminRecords.length === 0) return null;
+
+    // 1. 精細組距 (每 10 分一級)
+    const distribution = { 
+      '100': 0, '90-99': 0, '80-89': 0, '70-79': 0, '60-69': 0, 
+      '50-59': 0, '40-49': 0, '30-39': 0, '20-29': 0, '10-19': 0, '0-9': 0 
+    };
+
+    // 2. 逐題正確率分析
+    const questionStats = allQuestions.map((q, i) => ({ 
+      index: i + 1, 
+      correct: 0, 
+      wrong: 0,
+      accuracy: 0
+    }));
+
+    adminRecords.forEach(record => {
+      const score = record.score || 0;
+      if (score === 100) distribution['100']++;
+      else if (score >= 90) distribution['90-99']++;
+      else if (score >= 80) distribution['80-89']++;
+      else if (score >= 70) distribution['70-79']++;
+      else if (score >= 60) distribution['60-69']++;
+      else if (score >= 50) distribution['50-59']++;
+      else if (score >= 40) distribution['40-49']++;
+      else if (score >= 30) distribution['30-39']++;
+      else if (score >= 20) distribution['20-29']++;
+      else if (score >= 10) distribution['10-19']++;
+      else distribution['0-9']++;
+
+      if (Array.isArray(record.answers)) {
+        record.answers.forEach((ans, idx) => {
+          if (idx < allQuestions.length) {
+            if (ans === allQuestions[idx].ans) questionStats[idx].correct++;
+            else questionStats[idx].wrong++;
+          }
+        });
+      }
+    });
+
+    questionStats.forEach(stat => {
+      stat.accuracy = Math.round((stat.correct / adminRecords.length) * 100);
+    });
+
+    // 3. 魔法學霸榜 (排序邏輯：分數 -> 秒數 -> 送出時刻)
+    const leaderboard = [...adminRecords].sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      if (a.timeTaken !== b.timeTaken) return a.timeTaken - b.timeTaken;
+      const timeA = a.timestamp?.seconds || Date.now();
+      const timeB = b.timestamp?.seconds || Date.now();
+      return timeA - timeB;
+    }).slice(0, 5);
+
+    return { distribution, questionStats, leaderboard };
+  }, [adminRecords]);
+
+  const handleUserInfoChange = (field, value) => {
+    setUserInfo(prev => ({ ...prev, [field]: value }));
+    setValidationError(null);
+  };
+
+  const validateDuplicate = async () => {
+    if (!user) return;
+    setIsValidating(true);
+    try {
+      const submissionsRef = collection(db, 'artifacts', appId, 'public', 'data', 'submissions');
+      const snapshot = await getDocs(submissionsRef);
+      const isDuplicate = snapshot.docs.some(doc => {
+        const d = doc.data();
+        return d.grade === userInfo.grade && d.className === userInfo.className && d.seat === userInfo.seat;
+      });
+      if (isDuplicate) {
+        setValidationError(`此座號 (${userInfo.grade}年${userInfo.className}班${userInfo.seat}號) 已完成過測驗。`);
+        setIsValidating(false);
+      } else {
+        setGameState('quiz');
+        setTimeLeft(TOTAL_TIME);
+        setUserAnswers([]);
+        setCurrentIndex(0);
+        setIsTimeUp(false);
+        setIsValidating(false);
+      }
+    } catch (e) {
+      setValidationError("資料庫驗證失敗，請檢查網路連線。");
+      setIsValidating(false);
+    }
+  };
+
+  const performFinish = (answers) => {
+    const usedTime = TOTAL_TIME - timeLeft;
+    const correctCount = answers.filter((ans, idx) => ans === allQuestions[idx].ans).length;
+    const score = correctCount * 4;
+    setFinalAnswersData(answers);
+    setTimeTaken(usedTime);
+    setGameState('result');
+    saveToCloud(answers, score, usedTime);
+  };
+
+  const saveToCloud = async (answers, score, usedTime) => {
+    if (!user) return;
+    setIsSaving(true);
+    try {
+      const submissionRef = collection(db, 'artifacts', appId, 'public', 'data', 'submissions');
+      await addDoc(submissionRef, { ...userInfo, score, timeTaken: usedTime, timestamp: serverTimestamp(), userId: user.uid, answers, isTimeUp });
+    } catch (e) { console.error("Save failed"); } finally { setIsSaving(false); }
+  };
+
+  const handleNext = () => {
+    const updatedAnswers = [...userAnswers, selectedAnswer];
+    setUserAnswers(updatedAnswers);
+    setSelectedAnswer(null);
+    setShowHint(false);
+    if (currentIndex < allQuestions.length - 1) setCurrentIndex(currentIndex + 1);
+    else performFinish(updatedAnswers);
+  };
+
+  const handleSubmitEarly = () => {
+    const finalAnswers = [...userAnswers, selectedAnswer];
+    while (finalAnswers.length < allQuestions.length) finalAnswers.push(null);
+    performFinish(finalAnswers);
+    setShowSubmitModal(false);
+  };
+
+  const handleAutoSubmit = () => {
+    setIsTimeUp(true);
+    const finalAnswers = [...userAnswers];
+    while (finalAnswers.length < allQuestions.length) finalAnswers.push(null);
+    performFinish(finalAnswers);
+  };
+
+  const handleAdminLogin = () => {
+    if (adminInputPass === ADMIN_PASS) { setGameState('admin'); setLoginError(false); }
+    else { setLoginError(true); setAdminInputPass(''); }
+  };
+
+  const handleClearRecords = async () => {
+    if (!user) return;
+    setIsSaving(true);
+    try {
+      const snapshot = await getDocs(collection(db, 'artifacts', appId, 'public', 'data', 'submissions'));
+      await Promise.all(snapshot.docs.map(d => deleteDoc(d.ref)));
+      setIsConfirmingClear(false);
+    } catch (e) { console.error("Clear error"); } finally { setIsSaving(false); }
+  };
+
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const formatDateTime = (ts) => {
+    if (!ts) return '--';
+    const date = new Date(ts.seconds * 1000);
+    return date.toLocaleString('zh-TW', { hour12: false });
+  };
+
+  // --- Views ---
+
+  if (!authChecked) {
+    return (
+      <div className="min-h-screen bg-[#FDFBF7] flex flex-col items-center justify-center font-sans text-[#8FA382]">
+        <Loader2 size={48} className="animate-spin mb-4" />
+        <div className="font-bold tracking-widest uppercase text-sm">系統初始化中...</div>
+      </div>
+    );
+  }
+
+  if (gameState === 'start') {
+    return (
+      <div className="min-h-screen bg-[#FDFBF7] flex items-center justify-center p-4 font-sans animate-in">
+        <div className="max-w-xl w-full bg-white rounded-[2.5rem] shadow-xl border border-[#F0EDE5] overflow-hidden">
+          <div className="bg-[#8FA382] p-8 text-[#FDFBF7] text-center">
+            <h1 className="text-3xl md:text-4xl font-black mb-2 tracking-tight italic">114學年度上學期</h1>
+            <h2 className="text-xl md:text-2xl font-light opacity-95 text-amber-50 italic">魔法家族期末考</h2>
+          </div>
+          <div className="p-6 md:p-10 space-y-6">
+            <div className="grid grid-cols-3 gap-3">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-[#8FA382] ml-1 uppercase tracking-widest">年級</label>
+                <select value={userInfo.grade} onChange={(e) => handleUserInfoChange('grade', e.target.value)} className="w-full bg-[#FDFBF7] border border-[#F0EDE5] rounded-xl p-3 text-[#4A4947] font-bold outline-none focus:border-[#8FA382] text-sm appearance-none">
+                  <option value="">請選擇</option>{range(1, 2).map(n => <option key={n} value={n}>{n} 年級</option>)}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-[#8FA382] ml-1 uppercase tracking-widest">班級</label>
+                <select value={userInfo.className} onChange={(e) => handleUserInfoChange('className', e.target.value)} className="w-full bg-[#FDFBF7] border border-[#F0EDE5] rounded-xl p-3 text-[#4A4947] font-bold outline-none focus:border-[#8FA382] text-sm appearance-none">
+                  <option value="">請選擇</option>{range(1, 34).map(n => <option key={n} value={n}>{n} 班</option>)}
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-[#8FA382] ml-1 uppercase tracking-widest">座號</label>
+                <select value={userInfo.seat} onChange={(e) => handleUserInfoChange('seat', e.target.value)} className="w-full bg-[#FDFBF7] border border-[#F0EDE5] rounded-xl p-3 text-[#4A4947] font-bold outline-none focus:border-[#8FA382] text-sm appearance-none">
+                  <option value="">請選擇</option>{range(1, 34).map(n => <option key={n} value={n}>{n} 號</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="space-y-1">
+              <label className="text-[10px] font-black text-[#8FA382] ml-1 uppercase tracking-widest">真實姓名</label>
+              <input type="text" placeholder="請輸入姓名" value={userInfo.name} onChange={(e) => handleUserInfoChange('name', e.target.value)} className="w-full bg-[#FDFBF7] border border-[#F0EDE5] rounded-xl p-4 text-[#4A4947] font-bold outline-none focus:border-[#8FA382] text-lg italic shadow-inner" />
+            </div>
+            <div className="bg-[#FAF9F6] border border-[#F0EDE5] p-5 rounded-2xl space-y-2">
+              <h3 className="text-[#8FA382] font-black flex items-center text-sm italic"><AlertCircle className="mr-2 text-amber-500" size={16} /> 應試守則</h3>
+              <ul className="space-y-2 text-[#6B705C] font-semibold text-[11px] leading-relaxed">
+                <li><span className="text-[#8FA382] font-black mr-1">1.</span> 點選下一題後，即無法回到上一題，請慎思後再作答。</li>
+                <li><span className="text-[#8FA382] font-black mr-1">2.</span> 限時 25 分鐘作答，時間到未送出者，以 0 分計。</li>
+                <li><span className="text-[#8FA382] font-black mr-1">3.</span> 可查詢 <a href="https://law.moj.gov.tw/" target="_blank" rel="noopener noreferrer" className="text-emerald-700 underline font-black inline-flex items-center">全國法規資料庫 <ExternalLink size={10} className="ml-0.5" /></a> 與紙本書籍、參考資料或上課用書，但嚴禁使用生成式AI(包含CHAT GPT、GENIMI、DEEPSEEK等..)。</li>
+                <li><span className="text-[#8FA382] font-black mr-1">4.</span> 作答結束後，請勿恣意移動，停留於成績介面等待指示。</li>
+                <li><span className="text-rose-700 font-black mr-1">5.</span> 務必登入任一GOOGLE帳號(學校、私人皆可)，使用無痕模式將無成績。</li>
+                <li><span className="text-emerald-700 font-black mr-1">6.</span> 本測驗每題4分，共25題，總分100分。</li>
+                <li><span className="text-[#8FA382] font-black mr-1">7.</span> 本測驗共25題，皆為本學期所學，一年級公民科範圍共9題、二年級公民科範圍共15題、警察參訪考題共1題。</li>
+              </ul>
+            </div>
+            {validationError && <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl flex items-center text-rose-600 text-xs font-bold animate-shake"><ShieldAlert className="mr-2" size={14} /> {validationError}</div>}
+            {!user && <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center text-amber-700 text-xs font-bold animate-pulse"><LogIn className="mr-2" size={14} /> 請確保 Google 登入狀態。</div>}
+            <button onClick={validateDuplicate} disabled={!userInfo.grade || !userInfo.name || isValidating || !user} className={`w-full py-4 rounded-xl font-black transition-all shadow-lg flex items-center justify-center text-lg tracking-[0.1em] ${userInfo.name && user && !isValidating ? 'bg-[#8FA382] hover:bg-[#7D8F71] text-white shadow-[#8FA382]/30' : 'bg-[#E8E4D9] text-[#BAB6AA] cursor-not-allowed'}`}>
+              {isValidating ? <Loader2 className="animate-spin mr-2" size={20} /> : <>開始測驗 <ChevronRight className="ml-1" /></>}
+            </button>
+            <div className="text-center pt-2 mt-4 border-t border-[#F8F8F8]"><button onClick={() => setGameState('admin_login')} className="text-[9px] text-slate-300 hover:text-[#8FA382] font-black flex items-center justify-center mx-auto uppercase tracking-widest transition-colors"><Database size={8} className="mr-1" /> 管理端數據監測</button></div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (gameState === 'quiz') {
+    const currentQ = allQuestions[currentIndex];
+    const progress = ((currentIndex + 1) / allQuestions.length) * 100;
+    const isLastQ = currentIndex === allQuestions.length - 1;
+    const hasHint = !!currentQ.hint;
+
+    return (
+      <div className="min-h-screen bg-[#FDFBF7] p-4 md:p-8 flex flex-col items-center font-sans overflow-x-hidden animate-in">
+        <div className="max-w-3xl w-full">
+          <div className="flex justify-between items-center mb-6 animate-in">
+            <div className="bg-white px-5 py-2.5 rounded-xl border border-[#F0EDE5] flex items-center font-bold text-xs shadow-sm italic text-[#4A4947]">
+              <User className="mr-2 text-[#8FA382]" size={14} /> {userInfo.grade}-{userInfo.className}-{userInfo.seat} 號 {userInfo.name}
+            </div>
+            <div className={`px-6 py-2.5 rounded-xl shadow-md border-2 flex items-center font-mono text-xl font-black transition-all ${timeLeft < 120 ? 'bg-rose-50 border-rose-200 text-rose-600 animate-pulse' : 'bg-[#8FA382] border-white text-white'}`}>
+              <Timer className="mr-2" size={18} /> {formatTime(timeLeft)}
+            </div>
+          </div>
+          <div className="w-full bg-[#E8E4D9] h-2 rounded-full mb-8 overflow-hidden shadow-inner"><div className="bg-[#8FA382] h-full transition-all duration-500 ease-out" style={{ width: `${progress}%` }} /></div>
+          <div className="bg-white rounded-[2rem] shadow-lg border border-[#F0EDE5] p-6 md:p-10 mb-6 relative min-h-[350px] flex flex-col shadow-inner">
+            <div className="flex justify-between items-center mb-6">
+              <span className="bg-[#FAF9F6] text-[#8FA382] text-[10px] px-3 py-1 rounded-full font-black border border-[#F0EDE5] uppercase tracking-widest uppercase italic shadow-sm">Q {currentIndex + 1} / {allQuestions.length}</span>
+              {hasHint && (
+                <button onClick={() => setShowHint(!showHint)} className="flex items-center text-[#8FA382] font-black text-[10px] uppercase tracking-widest gap-1 transition-colors hover:text-[#7D8F71]">
+                  <Lightbulb size={12} className={showHint ? 'fill-amber-400 text-amber-400' : ''} /> {showHint ? '隱藏提示' : '魔法提示'}
+                </button>
+              )}
+            </div>
+            <h2 className="text-xl md:text-2xl font-bold text-[#4A4947] leading-relaxed mb-8 grow italic whitespace-pre-wrap">{currentQ.q}</h2>
+            {showHint && hasHint && <div className="mb-6 p-4 bg-amber-50 border-l-4 border-amber-400 rounded-r-xl animate-in text-xs text-amber-800 font-bold leading-relaxed">{currentQ.hint}</div>}
+            <div className="grid grid-cols-1 gap-3">
+              {currentQ.options.map((option, idx) => (
+                <button key={idx} onClick={() => setSelectedAnswer(idx)} className={`w-full text-left p-4 rounded-xl border-2 transition-all flex items-center group ${selectedAnswer === idx ? 'border-[#8FA382] bg-[#F8FAF7] shadow-sm translate-x-1' : 'border-transparent bg-[#FAF9F6] hover:border-[#F0EDE5]'}`}>
+                  <div className={`w-8 h-8 rounded-lg border-2 mr-4 flex items-center justify-center font-black text-sm transition-all ${selectedAnswer === idx ? 'border-[#8FA382] bg-[#8FA382] text-white' : 'border-[#F0EDE5] text-[#BAB6AA]'}`}>{String.fromCharCode(65 + idx)}</div>
+                  <span className={`text-base font-bold ${selectedAnswer === idx ? 'text-[#4A4947]' : 'text-[#6B705C]'}`}>{option}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="flex justify-between items-center gap-4 px-2">
+            <button onClick={() => setShowSubmitModal(true)} className="px-6 py-4 rounded-xl font-black bg-white border-2 border-[#E8E4D9] text-[#BAB6AA] hover:text-rose-500 transition-all flex items-center gap-2 text-base active:scale-95 shadow-sm italic"><Send size={16} /> 提交作答</button>
+            <button disabled={selectedAnswer === null} onClick={handleNext} className={`px-10 py-4 rounded-xl font-black text-white shadow-xl transition-all flex items-center text-base tracking-widest active:scale-95 ${selectedAnswer === null ? 'bg-[#E8E4D9] cursor-not-allowed opacity-50' : 'bg-[#8FA382] hover:bg-[#7D8F71] hover:scale-105'}`}>{isLastQ ? '完成測驗' : '下一題'} <ChevronRight className="ml-1" size={18} /></button>
+          </div>
+        </div>
+        {showSubmitModal && (
+          <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in">
+            <div className="bg-white rounded-[2rem] p-8 max-w-sm w-full shadow-2xl border border-[#F0EDE5] text-center shadow-2xl">
+              <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center mx-auto mb-6 shadow-inner"><AlertCircle size={32} /></div>
+              <h3 className="text-xl font-black text-[#4A4947] mb-3 italic">確定要交卷嗎？</h3>
+              <p className="text-slate-400 text-sm mb-8 leading-relaxed font-semibold font-sans opacity-70">提交後將立即結算，無法再回頭作答。</p>
+              <div className="flex gap-3">
+                <button onClick={() => setShowSubmitModal(false)} className="flex-1 py-3 rounded-xl border border-[#F0EDE5] text-slate-400 font-bold hover:bg-slate-50 transition-all">繼續作答</button>
+                <button onClick={handleSubmitEarly} className="flex-1 py-3 rounded-xl bg-rose-500 text-white font-black hover:bg-rose-600 shadow-lg shadow-rose-200 transition-all">確認提交</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (gameState === 'result' && finalAnswersData) {
+    const correctCount = finalAnswersData.filter((ans, idx) => ans === allQuestions[idx].ans).length;
+    const score = isTimeUp ? 0 : correctCount * 4;
+    return (
+      <div className="min-h-screen bg-[#FDFBF7] p-6 md:p-12 flex flex-col items-center animate-in overflow-x-hidden">
+        <div className="max-w-4xl w-full">
+          <div className="bg-white rounded-[3rem] shadow-2xl border border-[#F0EDE5] overflow-hidden mb-12">
+            <div className={`p-12 text-white text-center relative ${isTimeUp ? 'bg-[#A66D60]' : 'bg-[#8FA382]'}`}>
+              <Trophy size={60} className="mx-auto mb-6 text-amber-100 drop-shadow-md" />
+              <h1 className="text-4xl font-black mb-6 italic tracking-tighter">測驗成績結算</h1>
+              <div className="flex flex-col items-center space-y-4 mb-8 font-black">
+                <div className="bg-white/10 backdrop-blur-xl px-12 py-5 rounded-[2rem] border border-white/20 shadow-xl">
+                  <p className="text-lg font-bold opacity-80">{userInfo.grade} 年 {userInfo.className} 班 {userInfo.seat} 號</p>
+                  <p className="text-3xl font-black mt-1 tracking-widest uppercase italic tracking-widest italic">{userInfo.name}</p>
+                </div>
+                <div className="text-rose-100 font-black bg-black/20 px-8 py-2 rounded-full text-sm italic shadow-md">成績已同步至後台，請停留在此頁面等待指示。</div>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-8">
+                <div className="bg-white/10 p-6 rounded-2xl border border-white/10 shadow-inner"><div className="text-4xl font-black text-amber-200 tracking-tighter italic">{score}</div><div className="text-[10px] font-black uppercase opacity-60">Score 總分</div></div>
+                <div className="bg-white/10 p-6 rounded-2xl border border-white/10 shadow-inner"><div className="text-4xl font-black tracking-tighter italic">{correctCount}</div><div className="text-[10px] font-black uppercase opacity-60">Correct 答對</div></div>
+                <div className="bg-white/10 p-6 rounded-2xl border border-white/10 shadow-inner"><div className="text-4xl font-black tracking-tighter italic">{Math.round((correctCount/allQuestions.length)*100)}%</div><div className="text-[10px] font-black uppercase opacity-60 uppercase opacity-60">Accuracy</div></div>
+                <div className="bg-white/10 p-6 rounded-2xl border border-white/10 shadow-inner"><div className="text-2xl font-black h-10 flex items-center justify-center italic tracking-widest">{formatTime(timeTaken)}</div><div className="text-[10px] font-black uppercase opacity-60 uppercase opacity-60 tracking-widest uppercase opacity-60">Time Used</div></div>
+              </div>
+            </div>
+            <div className="p-8 md:p-16 bg-white italic"><h2 className="text-2xl font-black text-[#4A4947] flex items-center mb-10 border-b-2 border-[#FDFBF7] pb-6 tracking-tight italic"><BookOpen className="mr-4 text-[#8FA382]" size={32} /> 錯題複習報告</h2>
+              <div className="space-y-10">
+                {correctCount === allQuestions.length ? <div className="py-20 text-center text-4xl font-black text-[#8FA382] italic tracking-tighter animate-bounce">太棒了，全數回答正確~</div> : 
+                  allQuestions.filter((_, i) => finalAnswersData[i] !== allQuestions[i].ans).map((q, idx) => {
+                    const originalIdx = allQuestions.findIndex(origQ => origQ.id === q.id);
+                    const userSelectedIdx = finalAnswersData[originalIdx];
+                    return (
+                      <div key={idx} className="bg-[#FDFBF7] rounded-[2rem] p-8 border border-[#F0EDE5] shadow-sm animate-in">
+                        <span className="w-10 h-10 rounded-lg bg-[#4A4947] text-white flex items-center justify-center font-black text-lg mb-6 shadow-md italic">#{originalIdx + 1}</span>
+                        <p className="text-lg font-bold text-[#4A4947] mb-8 border-l-4 border-[#8FA382] pl-6 leading-relaxed italic grow whitespace-pre-wrap leading-relaxed italic grow">{q.q}</p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-4 font-bold italic">
+                          <div className="p-5 bg-rose-50 rounded-xl border border-rose-100 text-sm shadow-inner"><div className="text-rose-400 font-black mb-2 uppercase italic text-[10px] flex items-center tracking-widest uppercase tracking-widest"><XCircle size={12} className="mr-1" /> 您的回答</div><div className="text-rose-950 font-black">{userSelectedIdx !== null ? q.options[userSelectedIdx] : '（未作答）'}</div></div>
+                          <div className="p-5 bg-emerald-50 rounded-xl border border-[#8FA382]/20 text-sm shadow-inner"><div className="text-[#8FA382] font-black mb-2 uppercase italic text-[10px] flex items-center tracking-widest uppercase tracking-widest"><CheckCircle2 size={12} className="mr-1" /> 正確解答</div><div className="text-emerald-950 font-black">{q.options[q.ans]}</div></div>
+                        </div>
+                      </div>
+                    );
+                  })
+                }
+              </div>
+            </div>
+          </div>
+          <footer className="text-center text-[#BAB6AA] font-bold text-xs mb-20 italic tracking-widest uppercase opacity-40 italic italic">Examination Data Record Sealed • Magic Family Board of Education</footer>
+        </div>
+      </div>
+    );
+  }
+
+  // --- 管理端數據中心 ---
+  if (gameState === 'admin') {
+    const stats = analysisData;
+    return (
+      <div className="min-h-screen bg-[#FDFBF7] p-6 md:p-10 font-sans overflow-x-hidden animate-in">
+        <div className="max-w-7xl mx-auto font-black italic">
+          <div className="flex flex-col md:flex-row md:items-center justify-between mb-10 gap-4">
+            <button onClick={() => setGameState('start')} className="flex items-center text-slate-400 hover:text-[#8FA382] font-black transition-all mb-2 group text-sm italic"><ArrowLeft className="mr-1 group-hover:-translate-x-1" size={16} /> 首頁</button>
+            <h1 className="text-3xl font-black text-[#4A4947] tracking-tighter italic flex items-center uppercase tracking-tighter italic flex items-center">數據監測洞察中心 <span className="ml-2 text-xs font-bold bg-[#8FA382] text-white px-4 py-1.5 rounded-full not-italic tracking-wider uppercase shadow-sm italic tracking-widest uppercase shadow-sm shadow-inner shadow-inner shadow-inner">Live Analysis</span></h1>
+            <div className="flex gap-1 p-1 bg-[#F0EDE5] rounded-xl shadow-inner">
+              <button onClick={() => setActiveAdminTab('list')} className={`px-6 py-2 rounded-lg font-black text-xs transition-all ${activeAdminTab === 'list' ? 'bg-white text-[#8FA382] shadow-sm' : 'text-slate-500'}`}>應試清單</button>
+              <button onClick={() => setActiveAdminTab('insights')} className={`px-6 py-2 rounded-lg font-black text-xs transition-all ${activeAdminTab === 'insights' ? 'bg-white text-[#8FA382] shadow-sm' : 'text-slate-500'}`}>統計分析</button>
+            </div>
+          </div>
+          
+          {activeAdminTab === 'list' ? (
+            <div className="bg-white rounded-[2rem] border border-[#F0EDE5] shadow-xl overflow-hidden animate-in">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-[#FAF9F6] text-slate-400 font-black uppercase tracking-widest border-b border-[#F0EDE5] italic italic">
+                    <tr><th className="px-8 py-5">應試者姓名</th><th className="px-8 py-5">年/班/座號</th><th className="px-8 py-5 text-center">得分</th><th className="px-8 py-5 text-center">用時</th><th className="px-8 py-5">送出時刻</th></tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50 font-bold">
+                    {adminRecords.length === 0 ? <tr><td colSpan="5" className="px-8 py-20 text-center font-black text-slate-300 italic uppercase italic uppercase uppercase tracking-widest uppercase tracking-widest uppercase tracking-widest">No data available.</td></tr> : 
+                      adminRecords.map(r => (
+                        <tr key={r.id} className="hover:bg-[#FDFBF7] transition-all group font-black italic">
+                          <td className="px-8 py-5 font-black text-slate-800 underline underline-offset-4 decoration-2 decoration-[#8FA382]/10 group-hover:decoration-[#8FA382] transition-all italic tracking-tight italic tracking-tight italic tracking-tight">{r.name}</td>
+                          <td className="px-8 py-5 text-slate-500 italic italic">{r.grade}年{r.className}班{r.seat}號</td>
+                          <td className={`px-8 py-5 text-center font-black text-xl ${r.score >= 60 ? 'text-[#8FA382]' : 'text-rose-600'} italic italic`}>{r.score}</td>
+                          <td className="px-8 py-5 text-center font-mono text-slate-400 uppercase tracking-tighter italic italic italic italic">{formatTime(r.timeTaken || 0)}</td>
+                          <td className="px-8 py-5 text-[10px] text-[#BAB6AA] font-mono italic whitespace-nowrap overflow-hidden text-ellipsis italic italic italic italic"><div className="flex items-center gap-1 font-bold italic tracking-tighter italic tracking-tighter italic tracking-tighter italic tracking-tighter"><CalendarClock size={12} className="shrink-0" /> {formatDateTime(r.timestamp)}</div></td>
+                        </tr>
+                      ))
+                    }
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-8 animate-in font-black italic">
+              {/* 魔法學霸榜 */}
+              <div className="bg-[#FAF9F6] p-8 rounded-[2.5rem] border-2 border-[#8FA382]/20 shadow-md overflow-hidden relative">
+                <div className="absolute top-0 right-0 p-8 opacity-5 text-[#8FA382] rotate-12 italic italic rotate-12"><Trophy size={160} /></div>
+                <h3 className="text-2xl font-black text-[#4A4947] mb-8 flex items-center italic tracking-tight italic tracking-tight italic tracking-tight"><Medal className="mr-3 text-amber-500" /> 魔法家族學霸榜 (TOP 5)</h3>
+                <div className="grid grid-cols-1 gap-4">
+                  {stats?.leaderboard.map((r, i) => (
+                    <div key={r.id} className="flex items-center gap-6 p-5 bg-white rounded-3xl border border-[#F0EDE5] shadow-sm hover:scale-[1.01] transition-transform animate-in font-black shadow-inner shadow-inner" style={{ animationDelay: `${i * 100}ms` }}>
+                      <div className={`w-12 h-12 rounded-2xl flex items-center justify-center text-xl shadow-inner ${i===0?'bg-amber-400 text-white':i===1?'bg-slate-300 text-white':i===2?'bg-amber-700/60 text-white':'bg-slate-50 text-slate-400'} italic italic`}>{i+1}</div>
+                      <div className="grow italic italic"><div className="text-lg italic tracking-tight italic tracking-tight">{r.name}</div><div className="text-xs text-slate-400 uppercase tracking-widest italic italic">{r.grade}年{r.className}班{r.seat}號</div></div>
+                      <div className="text-right flex flex-col items-end italic italic">
+                        <div className="text-3xl text-sage italic tracking-tighter italic tracking-tighter">{r.score} <span className="text-[10px] not-italic opacity-50 ml-1 uppercase italic uppercase">Pts</span></div>
+                        <div className="text-[10px] text-slate-300 flex items-center gap-1 uppercase tracking-tighter italic font-bold italic font-bold"><Clock size={10} /> {formatTime(r.timeTaken)}</div>
+                      </div>
+                    </div>
+                  ))}
+                  {adminRecords.length === 0 && <div className="text-center py-8 text-slate-300 italic italic italic italic">等待第一位魔法挑戰者...</div>}
+                </div>
+              </div>
+
+              {/* 精細組距 */}
+              <div className="bg-white p-8 rounded-[2.5rem] border border-[#F0EDE5] shadow-lg italic italic">
+                <h3 className="text-xl font-black text-[#4A4947] mb-8 flex items-center italic tracking-tight uppercase italic tracking-tight italic tracking-tight uppercase"><BarChart className="mr-2 text-[#8FA382]" /> 全班成績組距分佈分析</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-12 gap-y-6 italic italic">
+                  {stats ? Object.entries(stats.distribution).map(([range, count]) => {
+                    const percentage = (count / adminRecords.length) * 100 || 0;
+                    return (
+                      <div key={range} className="space-y-2 group italic italic">
+                        <div className="flex justify-between text-[10px] font-black text-slate-600 italic uppercase tracking-widest italic tracking-widest italic tracking-widest"><span>{range} 分區</span><span className="group-hover:text-[#8FA382] transition-colors italic transition-colors">{count} 人 ({Math.round(percentage)}%)</span></div>
+                        <div className="w-full bg-[#FDFBF7] h-4 rounded-full overflow-hidden border border-[#F0EDE5] p-0.5 shadow-inner p-0.5 shadow-inner p-0.5 shadow-inner">
+                          <div className={`h-full rounded-full transition-all duration-1000 shadow-sm ${parseInt(range) >= 60 || range === '100' ? 'bg-[#8FA382]' : 'bg-rose-300'} italic italic`} style={{ width: `${percentage}%` }} />
+                        </div>
+                      </div>
+                    );
+                  }) : <div className="text-center py-10 font-bold text-slate-300 italic uppercase tracking-widest italic uppercase tracking-widest">Generating insights...</div>}
+                </div>
+              </div>
+
+              {/* 每題分析 */}
+              <div className="bg-white rounded-[2.5rem] border border-[#F0EDE5] shadow-lg overflow-hidden animate-in italic italic">
+                <div className="p-8 border-b border-[#F0EDE5] bg-[#FAF9F6] flex justify-between items-center italic italic">
+                  <h3 className="text-xl font-black text-[#4A4947] flex items-center italic tracking-tight uppercase italic tracking-tight italic tracking-tight uppercase"><Target className="mr-2 text-[#8FA382]" /> 逐題正確率 / 錯誤率分析報告</h3>
+                </div>
+                <div className="overflow-x-auto font-black italic italic">
+                  <table className="w-full text-left text-xs italic italic">
+                    <thead className="bg-[#FAF9F6] text-slate-400 font-black uppercase tracking-widest border-b border-slate-50 italic italic">
+                      <tr><th className="px-8 py-5">題號</th><th className="px-8 py-5 text-center">正確 / 錯誤 (人數)</th><th className="px-8 py-5">正確率百分比</th></tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-50 italic italic italic">
+                      {stats?.questionStats.map((qs, i) => (
+                        <tr key={i} className="hover:bg-[#FDFBF7] transition-all italic italic">
+                          <td className="px-8 py-5 italic italic"><span className="w-8 h-8 rounded-lg bg-slate-800 text-white flex items-center justify-center text-sm shadow-md italic italic">#{qs.index}</span></td>
+                          <td className="px-8 py-5 text-center tracking-wider italic italic italic"><span className="text-[#8FA382] font-black italic font-black">{qs.correct}</span> <span className="mx-1 text-slate-300 italic text-slate-300">/</span> <span className="text-rose-400 italic text-rose-400">{qs.wrong}</span></td>
+                          <td className="px-8 py-5 min-w-[200px] italic italic">
+                            <div className="flex items-center gap-4 font-black italic italic">
+                              <div className="grow bg-[#F0EDE5] h-2 rounded-full overflow-hidden border border-white shadow-inner p-0.5 italic italic">
+                                <div className={`h-full rounded-full transition-all duration-1000 shadow-sm ${qs.accuracy >= 70 ? 'bg-[#8FA382]' : qs.accuracy >= 40 ? 'bg-amber-400' : 'bg-rose-500 animate-pulse'} italic italic`} style={{ width: `${qs.accuracy}%` }} />
+                              </div>
+                              <span className={`w-10 text-right tracking-tighter ${qs.accuracy < 40 ? 'text-rose-600 underline underline-offset-4 decoration-rose-200 italic' : 'text-slate-600 italic'}`}>{qs.accuracy}%</span>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="bg-rose-50 p-8 rounded-[2.5rem] border border-rose-100 flex flex-col justify-center items-center shadow-inner mt-12 group italic italic italic">
+                   <div className="text-rose-400 font-black text-[10px] uppercase mb-4 tracking-[0.3em] italic opacity-60 italic opacity-60">Master Database Control</div>
+                   {isConfirmingClear ? (
+                      <div className="flex flex-col gap-2 scale-95 italic italic">
+                         <button onClick={handleClearRecords} className="bg-rose-600 text-white text-[11px] font-black px-10 py-3 rounded-xl hover:bg-rose-700 transition-all shadow-lg shadow-rose-200 uppercase tracking-widest italic tracking-widest italic">Purge All Cloud Records</button>
+                         <button onClick={() => setIsConfirmingClear(false)} className="text-rose-400 text-xs font-bold underline underline-offset-4 hover:text-rose-600 transition-all text-center italic text-center italic text-center italic text-center italic uppercase tracking-tighter mt-1">Cancel process</button>
+                      </div>
+                   ) : (
+                      <button onClick={() => setIsConfirmingClear(true)} className="flex flex-col items-center gap-2 text-rose-300 hover:text-rose-600 transition-all group p-4 rounded-3xl hover:bg-rose-100 shadow-sm border border-transparent hover:border-rose-200 transition-all">
+                        <Trash2 size={36} className="group-hover:scale-110 transition-transform transition-transform" />
+                        <span className="text-[9px] font-black tracking-widest uppercase italic">Master System Reset</span>
+                      </button>
+                   )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (gameState === 'admin_login') {
+    return (
+      <div className="min-h-screen bg-[#FDFBF7] flex items-center justify-center p-4 animate-in font-sans italic italic">
+        <div className="max-w-xs w-full bg-white rounded-[2rem] shadow-xl border border-[#F0EDE5] p-8 text-center shadow-2xl italic italic">
+          <LockKeyhole size={40} className="mx-auto mb-4 text-[#8FA382] italic italic" />
+          <h2 className="text-xl font-black text-[#4A4947] mb-6 italic tracking-tight italic tracking-tight">管理存取授權碼</h2>
+          <div className="space-y-4 italic italic">
+            <input type="password" placeholder="ENTER CODE" value={adminInputPass} onChange={(e) => setAdminInputPass(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleAdminLogin()} className={`w-full bg-[#FDFBF7] border border-[#F0EDE5] rounded-xl p-3 text-center text-xl font-mono tracking-widest outline-none transition-all shadow-inner italic shadow-inner ${loginError ? 'border-rose-400 animate-shake' : 'focus:border-[#8FA382]'} italic`} />
+            <button onClick={handleAdminLogin} className="w-full bg-[#8FA382] hover:bg-[#7D8F71] text-white font-black py-3 rounded-xl shadow-lg transition-all shadow-[#8FA382]/30 active:scale-95 italic italic">進入中心</button>
+            <button onClick={() => setGameState('start')} className="text-slate-400 font-bold text-[10px] hover:text-slate-600 transition-colors uppercase tracking-[0.2em] italic mt-2 italic mt-2">Abort & Exit</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+
+// 動畫注入
+if (typeof document !== 'undefined') {
+  const style = document.createElement('style');
+  style.innerHTML = `
+    @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes slide-in { from { transform: translateY(8px); } to { transform: translateY(0); } }
+    .animate-in { animation: fade-in 0.4s ease-out forwards, slide-in 0.4s ease-out forwards; }
+    @keyframes shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+    .animate-shake { animation: shake 0.2s ease-in-out 0s 2; }
+  `;
+  document.head.appendChild(style);
+}
